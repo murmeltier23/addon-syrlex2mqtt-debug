@@ -8,8 +8,8 @@ const PORT_HTTPS = 443;
 
 // Fake Zertifikate (werden schon im Add-on generiert)
 const options = {
-  key: fs.readFileSync('/ssl/server.key'),
-  cert: fs.readFileSync('/ssl/server.cert')
+  key: fs.readFileSync('/server.key'),
+  cert: fs.readFileSync('/server.cert')
 };
 
 // Handler für alle Requests
