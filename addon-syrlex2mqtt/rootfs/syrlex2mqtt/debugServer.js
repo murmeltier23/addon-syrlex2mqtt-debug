@@ -1,36 +1,55 @@
-// debugServer.js
-const mqtt = require("async-mqtt");
 const fs = require('fs');
+const http = require('http');
+const https = require('https');
 const express = require('express');
-const xml = require('xml2js');
-const https = require('https')
-const http = require('http')
 
-const PORT_HTTP = 80;
-const PORT_HTTPS = 443;
+// Ports
+const syrHttpPort = 80;
+const syrHttpsPort = 443;
 
-// Fake Zertifikate (werden schon im Add-on generiert)
-const options = {
-  key: fs.readFileSync(__dirname + '/server.key');
-  cert: fs.readFileSync(__dirname + '/server.cert');
-};
-
-// Handler für alle Requests
-function handleRequest(req, res) {
-  console.log(`➡️  ${req.method} ${req.url}`);
-  let body = '';
-  req.on('data', chunk => { body += chunk.toString(); });
-  req.on('end', () => {
-    if (body.length > 0) console.log('📦 Body:', body);
-    res.writeHead(200, { 'Content-Type': 'text/xml' });
-    res.end('<?xml version="1.0" encoding="utf-8"?><sc version="1.0"><d></d></sc>');
-  });
+// SSL-Dateien laden (oder Dummy erstellen)
+let credentials;
+try {
+  const key = fs.readFileSync(__dirname + '/server.key');
+  const cert = fs.readFileSync(__dirname + '/server.cert');
+  credentials = { key: key, cert: cert };
+} catch (err) {
+  console.warn("⚠️ Keine Zertifikate gefunden – HTTPS startet evtl. nicht!");
+  credentials = { key: '', cert: '' };
 }
 
-// Server starten
-http.createServer(handleRequest).listen(PORT_HTTP, () => {
-  console.log(`🌐 Debug HTTP Server läuft auf Port ${PORT_HTTP}`);
+const app = express();
+
+// Parser für Text/XML/JSON
+app.use(express.text({ type: ['application/xml', 'text/xml', 'application/soap+xml', 'text/*'] }));
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+
+// Logger für alle Requests
+app.all('*', (req, res) => {
+  console.log("📥 Incoming Request:");
+  console.log("  Method:", req.method);
+  console.log("  URL   :", req.originalUrl);
+  console.log("  Host  :", req.hostname);
+  console.log("  Headers:", JSON.stringify(req.headers, null, 2));
+  console.log("  Body  :", req.body);
+
+  // Einfacher Dummy-Response (damit Gerät nicht hängen bleibt)
+  const responseXml = '<?xml version="1.0" encoding="utf-8"?><sc version="1.0"><d></d></sc>';
+  res.set('Content-Type', 'text/xml; charset=utf-8');
+  res.send(responseXml);
 });
-https.createServer(options, handleRequest).listen(PORT_HTTPS, () => {
-  console.log(`🔒 Debug HTTPS Server läuft auf Port ${PORT_HTTPS}`);
+
+// HTTP starten
+http.createServer(app).listen(syrHttpPort, () => {
+  console.log(`🌐 Debug HTTP Server läuft auf Port ${syrHttpPort}`);
 });
+
+// HTTPS starten (falls Zertifikate da sind)
+if (credentials.key && credentials.cert) {
+  https.createServer(credentials, app).listen(syrHttpsPort, () => {
+    console.log(`🔒 Debug HTTPS Server läuft auf Port ${syrHttpsPort}`);
+  });
+} else {
+  console.log("⚠️ HTTPS wurde nicht gestartet (fehlende Zertifikate)");
+}
