@@ -1,0 +1,16 @@
+{
+  "dependencies": {
+    "async-mqtt": "^2.6.3",
+    "express": "^4.18.2",
+    "xml2js": "^0.6.2"
+  },
+  "name": "syrlex2mqtt",
+  "version": "1.0.0",
+  "description": "syrlex2mqtt simulates the SyrConnect cloud and makes the SYR water softening units of the LEX Plus series available via MQTT",
+  "main": "syrlex2mqtt.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": ""
+}
