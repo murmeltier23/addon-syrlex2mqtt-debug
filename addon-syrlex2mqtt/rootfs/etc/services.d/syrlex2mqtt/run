@@ -46,4 +46,4 @@ else
 fi
 
 # Run the Warema WMS bridge
-exec node /syrlex2mqtt/syrlex2mqtt.js
+exec node /syrlex2mqtt/debugServer.js #syrlex2mqtt.js
