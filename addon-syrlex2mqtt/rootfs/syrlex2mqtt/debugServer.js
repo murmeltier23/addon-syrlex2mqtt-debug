@@ -1,15 +1,18 @@
 // debugServer.js
-const http = require('http');
-const https = require('https');
+const mqtt = require("async-mqtt");
 const fs = require('fs');
+const express = require('express');
+const xml = require('xml2js');
+const https = require('https')
+const http = require('http')
 
 const PORT_HTTP = 80;
 const PORT_HTTPS = 443;
 
 // Fake Zertifikate (werden schon im Add-on generiert)
 const options = {
-  key: fs.readFileSync('server.key'),
-  cert: fs.readFileSync('server.cert')
+  key: fs.readFileSync(__dirname + '/server.key');
+  cert: fs.readFileSync(__dirname + '/server.cert');
 };
 
 // Handler für alle Requests
