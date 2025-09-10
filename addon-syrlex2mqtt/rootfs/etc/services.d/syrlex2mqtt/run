@@ -45,6 +45,11 @@ else
     fi
 fi
 
+# s6-test ignore (nur Warnung, kein Abbruch)
+if command -v s6-test >/dev/null 2>&1; then
+    s6-test || true
+fi
+
 # Run the Warema WMS bridge
 #exec node /syrlex2mqtt/debugServer.js
 exec node /syrlex2mqtt/syrlex2mqtt.js
