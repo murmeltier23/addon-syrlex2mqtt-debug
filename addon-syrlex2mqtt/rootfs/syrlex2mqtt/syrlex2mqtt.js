@@ -522,37 +522,51 @@ async function initWebServer() {
 
 // Verbose Logging aller Requests
   app.use((req, res, next) => {
-      logVerbose(
-        "📥 Incoming Request:\n" +
-        "  LocalPort:   " + req.socket.localPort + "\n" +
-        "  RemoteAddr:  " + req.socket.remoteAddress + "\n" +
-        "  Method:      " + req.method + "\n" +
-        "  URL:         " + req.url + "\n" +
-        "  Host:        " + req.hostname + "\n" +
-        "  User-Agent:  " + req.get("user-agent") + "\n" +
-        "  Headers:     " + JSON.stringify(req.headers, null, 2) + "\n" +
-        "  Body: " + (req.body.xml ? ("\n" + req.body.xml) : "{}")
-      );
-      next();
+	  logVerbose(
+	    "📥 Request for " +
+	      req.hostname +
+	      req.url +
+	      " via port " +
+	      req.socket.localPort +
+	      " from " +
+	      req.socket.remoteAddress +
+	      ((req.body.xml == undefined) ? "" : ("\n" + req.body.xml))
+	  );
+    next();
   });
 
-  // Endpoints
+  // --- BasicCommands ---
+  app.get('/WebServices/SyrConnectLimexWebService.asmx/GetBasicCommands', (req, res) => {
+    logVerbose("📝 Handling GET GetBasicCommands...");
+    const xml = basicCommands(req, res);
+    logVerbose("⬅️ Response:\n" + xml);
+  });
   app.post('/WebServices/SyrConnectLimexWebService.asmx/GetBasicCommands', (req, res) => {
-    logVerbose("📝 Handling GetBasicCommands...");
-    basicCommands(req, res);
+    logVerbose("📝 Handling POST GetBasicCommands...");
+    const xml = basicCommands(req, res);
+    logVerbose("⬅️ Response:\n" + xml);
   });
   app.post('/GetBasicCommands', (req, res) => {
-    logVerbose("📝 Handling short GetBasicCommands...");
-    basicCommands(req, res);
+    logVerbose("📝 Handling short POST GetBasicCommands...");
+    const xml = basicCommands(req, res);
+    logVerbose("⬅️ Response:\n" + xml);
   });
 
+  // --- AllCommands ---
+  app.get('/WebServices/SyrConnectLimexWebService.asmx/GetAllCommands', (req, res) => {
+    logVerbose("📝 Handling GET GetAllCommands...");
+    const xml = allCommands(req, res);
+    logVerbose("⬅️ Response:\n" + xml);
+  });
   app.post('/WebServices/SyrConnectLimexWebService.asmx/GetAllCommands', (req, res) => {
-    logVerbose("📝 Handling GetAllCommands...");
-    allCommands(req, res);
+    logVerbose("📝 Handling POST GetAllCommands...");
+    const xml = allCommands(req, res);
+    logVerbose("⬅️ Response:\n" + xml);
   });
   app.post('/GetAllCommands', (req, res) => {
-    logVerbose("📝 Handling short GetAllCommands...");
-    allCommands(req, res);
+    logVerbose("📝 Handling short POST GetAllCommands...");
+    const xml = allCommands(req, res);
+    logVerbose("⬅️ Response:\n" + xml);
   });
 
   // HTTP starten
