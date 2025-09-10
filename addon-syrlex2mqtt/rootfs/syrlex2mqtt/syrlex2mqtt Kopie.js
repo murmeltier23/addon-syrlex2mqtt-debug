@@ -517,57 +517,50 @@ function allCommands(req, res) {
 async function initWebServer() {
   const app = express();
 
-  // Für XML-Body Parsing von Lex
-  app.use(express.text({ type: ['text/xml', 'application/xml', '*/xml'] }));
+  // for parsing application/x-www-form-urlencoded
+  app.use(express.urlencoded({ extended: true }));
 
-// Verbose Logging aller Requests
   app.use((req, res, next) => {
-      logVerbose(
-        "📥 Incoming Request:\n" +
-        "  LocalPort:   " + req.socket.localPort + "\n" +
-        "  RemoteAddr:  " + req.socket.remoteAddress + "\n" +
-        "  Method:      " + req.method + "\n" +
-        "  URL:         " + req.url + "\n" +
-        "  Host:        " + req.hostname + "\n" +
-        "  User-Agent:  " + req.get("user-agent") + "\n" +
-        "  Headers:     " + JSON.stringify(req.headers, null, 2) + "\n" +
-        "  Body: " + (req.body.xml ? ("\n" + req.body.xml) : "{}")
-      );
-      next();
+	  logVerbose(
+	    "📥 Request for " +
+	      req.hostname +
+	      req.url +
+	      " via port " +
+	      req.socket.localPort +
+	      " from " +
+	      req.socket.remoteAddress +
+	      ((req.body.xml == undefined) ? "" : ("\n" + req.body.xml))
+	  );
+    next();
   });
 
-  // Endpoints
   app.post('/WebServices/SyrConnectLimexWebService.asmx/GetBasicCommands', (req, res) => {
-    logVerbose("📝 Handling GetBasicCommands...");
-    basicCommands(req, res);
+    logverbose("RequestStartet " + req.url + "res" + res);
+	basicCommands(req, res);
   });
   app.post('/GetBasicCommands', (req, res) => {
-    logVerbose("📝 Handling short GetBasicCommands...");
     basicCommands(req, res);
   });
 
   app.post('/WebServices/SyrConnectLimexWebService.asmx/GetAllCommands', (req, res) => {
-    logVerbose("📝 Handling GetAllCommands...");
     allCommands(req, res);
   });
   app.post('/GetAllCommands', (req, res) => {
-    logVerbose("📝 Handling short GetAllCommands...");
     allCommands(req, res);
   });
 
   // HTTP starten
   httpServer = http.createServer(app).listen(syrHttpPort, () => {
-    logVerbose(`🌍 HTTP listening on port ${syrHttpPort}`);
+    logInfo(`🌍 HTTP listening on port ${syrHttpPort}`);
   });
 
   // HTTPS starten
   httpsServer = https.createServer(credentials, app).listen(syrHttpsPort, () => {
-    logVerbose(`🔒 HTTPS listening on port ${syrHttpsPort}`);
+    logInfo(`🔒 HTTPS listening on port ${syrHttpsPort}`);
   });
 
   return app;
 }
-
 
 
 logInfo("Connecting to MQTT server '" + brokerUrl + "' with username '" + username + "'");
