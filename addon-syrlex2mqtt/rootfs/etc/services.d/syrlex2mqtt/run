@@ -24,6 +24,7 @@ bashio::log.info "Setting HTTP_PORT to $(bashio::addon.port 80)"
 export "HTTPS_PORT=$(bashio::addon.port 443)"
 bashio::log.info "Setting HTTPS_PORT to $(bashio::addon.port 443)"
 
+# MQTT configuration
 if ! bashio::services.available "mqtt" && ! bashio::config.exists 'mqtt.server'; then
     bashio::exit.nok "No internal MQTT service found and no MQTT server defined. Please install Mosquitto broker or specify your own."
 else
@@ -50,6 +51,6 @@ if command -v s6-test >/dev/null 2>&1; then
     s6-test || true
 fi
 
-# Run the Warema WMS bridge
-#exec node /syrlex2mqtt/debugServer.js
+# Start NodeJS mit Debugserver
+# exec ersetzt den Shell-Prozess, HA Supervisor überwacht direkt den Node-Prozess
 exec node /syrlex2mqtt/syrlex2mqtt.js
