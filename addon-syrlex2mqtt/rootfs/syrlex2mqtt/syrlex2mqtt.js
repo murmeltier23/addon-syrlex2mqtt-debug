@@ -540,16 +540,19 @@ async function initWebServer() {
     logVerbose("📝 Handling GET GetBasicCommands...");
     const xml = basicCommands(req, res);
     logVerbose("⬅️ Response:\n" + xml);
+	return xml;
   });
   app.post('/WebServices/SyrConnectLimexWebService.asmx/GetBasicCommands', (req, res) => {
     logVerbose("📝 Handling POST GetBasicCommands...");
     const xml = basicCommands(req, res);
     logVerbose("⬅️ Response:\n" + xml);
+	return xml;
   });
   app.post('/GetBasicCommands', (req, res) => {
     logVerbose("📝 Handling short POST GetBasicCommands...");
     const xml = basicCommands(req, res);
     logVerbose("⬅️ Response:\n" + xml);
+	return xml;
   });
 
   // --- AllCommands ---
@@ -557,16 +560,19 @@ async function initWebServer() {
     logVerbose("📝 Handling GET GetAllCommands...");
     const xml = allCommands(req, res);
     logVerbose("⬅️ Response:\n" + xml);
+	return xml;
   });
   app.post('/WebServices/SyrConnectLimexWebService.asmx/GetAllCommands', (req, res) => {
     logVerbose("📝 Handling POST GetAllCommands...");
     const xml = allCommands(req, res);
     logVerbose("⬅️ Response:\n" + xml);
+	return xml;
   });
   app.post('/GetAllCommands', (req, res) => {
     logVerbose("📝 Handling short POST GetAllCommands...");
     const xml = allCommands(req, res);
     logVerbose("⬅️ Response:\n" + xml);
+	return xml;
   });
 
   // HTTP starten
