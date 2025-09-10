@@ -1,55 +1,81 @@
-const fs = require('fs');
+// debugServer.js
 const http = require('http');
 const https = require('https');
-const express = require('express');
+const fs = require('fs');
+const path = require('path');
 
-// Ports
-const syrHttpPort = 80;
-const syrHttpsPort = 443;
+const PORT_HTTP = 80;
+const PORT_HTTPS = 443;
 
-// SSL-Dateien laden (oder Dummy erstellen)
-let credentials;
-try {
-  const key = fs.readFileSync(__dirname + '/server.key');
-  const cert = fs.readFileSync(__dirname + '/server.cert');
-  credentials = { key: key, cert: cert };
-} catch (err) {
-  console.warn("⚠️ Keine Zertifikate gefunden – HTTPS startet evtl. nicht!");
-  credentials = { key: '', cert: '' };
+// Zertifikate ausschließlich aus dem gleichen Verzeichnis wie dieses Script
+const KEY_PATH = path.join(__dirname, 'server.key');
+const CERT_PATH = path.join(__dirname, 'server.cert');
+
+function prettyLogHeaders(headers) {
+  try { return JSON.stringify(headers, null, 2); } catch (e) { return String(headers); }
 }
 
-const app = express();
-
-// Parser für Text/XML/JSON
-app.use(express.text({ type: ['application/xml', 'text/xml', 'application/soap+xml', 'text/*'] }));
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
-
-// Logger für alle Requests
-app.all('*', (req, res) => {
+function handleRequest(req, res) {
+  const localPort = req.socket && req.socket.localPort ? req.socket.localPort : 'unknown';
   console.log("📥 Incoming Request:");
-  console.log("  Method:", req.method);
-  console.log("  URL   :", req.originalUrl);
-  console.log("  Host  :", req.hostname);
-  console.log("  Headers:", JSON.stringify(req.headers, null, 2));
-  console.log("  Body  :", req.body);
+  console.log("  LocalPort:  ", localPort);
+  console.log("  RemoteAddr: ", req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : 'unknown');
+  console.log("  Method:     ", req.method);
+  console.log("  URL:        ", req.url);
+  console.log("  Host:       ", req.headers.host || '');
+  console.log("  User-Agent: ", req.headers['user-agent'] || '');
+  console.log("  Headers:    ", prettyLogHeaders(req.headers));
 
-  // Einfacher Dummy-Response (damit Gerät nicht hängen bleibt)
-  const responseXml = '<?xml version="1.0" encoding="utf-8"?><sc version="1.0"><d></d></sc>';
-  res.set('Content-Type', 'text/xml; charset=utf-8');
-  res.send(responseXml);
-});
+  let body = '';
+  req.on('data', chunk => { body += chunk.toString(); });
+  req.on('end', () => {
+    if (body && body.length > 0) {
+      console.log(`  Body (${body.length} bytes):`);
+      console.log(body);
+    } else {
+      console.log("  Body: {}");
+    }
 
-// HTTP starten
-http.createServer(app).listen(syrHttpPort, () => {
-  console.log(`🌐 Debug HTTP Server läuft auf Port ${syrHttpPort}`);
-});
+    // Spezielle Antwort für GetBasicCommands (Cloud-like)
+    if (req.url && req.url.toLowerCase().includes("getbasiccommands")) {
+      console.log("📝 Sending fake GetBasicCommands XML response...");
+      const xml = `<?xml version="1.0" encoding="utf-8"?>
+<sc version="1.0">
+  <d>
+    <c n="getSRN" v=""/>
+    <c n="getVER" v=""/>
+    <c n="getFIR" v=""/>
+    <c n="getTYP" v=""/>
+    <c n="getCNA" v=""/>
+    <c n="getIPA" v=""/>
+  </d>
+</sc>`;
+      res.writeHead(200, { "Content-Type": "text/xml; charset=utf-8" });
+      res.end(xml);
+      return;
+    }
 
-// HTTPS starten (falls Zertifikate da sind)
-if (credentials.key && credentials.cert) {
-  https.createServer(credentials, app).listen(syrHttpsPort, () => {
-    console.log(`🔒 Debug HTTPS Server läuft auf Port ${syrHttpsPort}`);
+    // Default-Antwort (verhindert Hänger)
+    res.writeHead(200, { "Content-Type": "text/xml; charset=utf-8" });
+    res.end(`<?xml version="1.0" encoding="utf-8"?><sc version="1.0"><d></d></sc>`);
   });
-} else {
-  console.log("⚠️ HTTPS wurde nicht gestartet (fehlende Zertifikate)");
+}
+
+// HTTP-Server immer starten
+http.createServer(handleRequest).listen(PORT_HTTP, () => {
+  console.log(`🌐 Debug HTTP Server läuft auf Port ${PORT_HTTP}`);
+});
+
+// HTTPS-Server nur starten, wenn die Certs im selben Ordner vorhanden sind
+try {
+  const key = fs.readFileSync(KEY_PATH);
+  const cert = fs.readFileSync(CERT_PATH);
+  https.createServer({ key, cert }, (req, res) => handleRequest(req, res))
+       .listen(PORT_HTTPS, () => {
+         console.log(`🔒 Debug HTTPS Server läuft auf Port ${PORT_HTTPS}`);
+         console.log(`🔐 Zertifikate geladen von: ${KEY_PATH} & ${CERT_PATH}`);
+       });
+} catch (err) {
+  console.log(`🔒 HTTPS-Server NICHT gestartet: Zertifikate nicht gefunden unter ${KEY_PATH} / ${CERT_PATH}`);
+  // kein Throw — HTTP bleibt aktiv
 }
