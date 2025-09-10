@@ -506,14 +506,16 @@ async function initWebServer() {
   app.use(express.urlencoded({ extended: true }));
 
   app.use((req, res, next) => {
-    logVerbose(
-      "📥 Request for " +
-        req.hostname +
-        req.url +
-        " via port " +
-        req.socket.localPort +
-        ((req.body.xml == undefined) ? "" : ("\n" + req.body.xml))
-    );
+	  logVerbose(
+	    "📥 Request for " +
+	      req.hostname +
+	      req.url +
+	      " via port " +
+	      req.socket.localPort +
+	      " from " +
+	      req.socket.remoteAddress +
+	      ((req.body.xml == undefined) ? "" : ("\n" + req.body.xml))
+	  );
     next();
   });
 
