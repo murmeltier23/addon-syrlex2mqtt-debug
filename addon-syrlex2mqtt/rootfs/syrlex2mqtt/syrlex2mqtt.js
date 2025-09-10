@@ -429,9 +429,24 @@ function parseToValueMap(json) {
 }
 
 function basicCommands(req, res) {
-	res.set('Content-Type', 'text/xml');
-	let responseXml = xmlStart + getXmlBasicC() + xmlEnd;
-	res.send(responseXml);
+	//res.set('Content-Type', 'text/xml');
+	//let responseXml = xmlStart + getXmlBasicC() + xmlEnd;
+	//res.send(responseXml);
+	//logVerbose("Response to basicCommands: " + responseXml);
+    res.set('Content-Type', 'text/xml');
+
+    let responseXml =
+      xmlStart +
+      '<c n="getSRN" v="123456789"/>' +    // Seriennummer
+      '<c n="getVER" v="1.0.0"/>' +       // Version
+      '<c n="getFIR" v="FW1"/>' +         // Firmware
+      '<c n="getTYP" v="LEXplus10SL"/>' + // Typ
+      '<c n="getCNA" v="MyDevice"/>' +    // Name
+      '<c n="getIPA" v="192.168.1.50"/>' +// IP
+      xmlEnd;
+
+    res.send(responseXml);
+   
 	logVerbose("Response to basicCommands: " +  responseXml);
 }
 
