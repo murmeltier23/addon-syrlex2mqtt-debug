@@ -720,12 +720,36 @@ async function initWebServer() {
     next();
   });
 
-  app.get('/WebServices/SyrConnectLimexWebService.asmx/GetBasicCommands', (req, res) => { basicCommands(req, res).catch ? /*if async*/ : null; });
-  app.post('/WebServices/SyrConnectLimexWebService.asmx/GetBasicCommands', (req, res) => { basicCommands(req, res).catch ? null : null; });
+  // BasicCommands: GET + POST
+  app.get(
+    '/WebServices/SyrConnectLimexWebService.asmx/GetBasicCommands',
+    (req, res) => {
+      basicCommands(req, res);
+    }
+  );
+
+  app.post(
+    '/WebServices/SyrConnectLimexWebService.asmx/GetBasicCommands',
+    (req, res) => {
+      basicCommands(req, res);
+    }
+  );
 
   // AllCommands: GET + POST
-  app.post('/WebServices/SyrConnectLimexWebServicxe.asmx/GetAllCommands', (req, res) => { allCommands(req, res); });
-  app.get('/WebServices/SyrConnectLimexWebService.asmx/GetAllCommands', (req, res) => { allCommands(req, res); });
+  app.post(
+    '/WebServices/SyrConnectLimexWebService.asmx/GetAllCommands',
+    (req, res) => {
+      allCommands(req, res);
+    }
+  );
+
+  app.get(
+    '/WebServices/SyrConnectLimexWebService.asmx/GetAllCommands',
+    (req, res) => {
+      allCommands(req, res);
+    }
+  );
+
 
   // HTTP starten
   httpServer = http.createServer(app).listen(syrHttpPort, () => {
