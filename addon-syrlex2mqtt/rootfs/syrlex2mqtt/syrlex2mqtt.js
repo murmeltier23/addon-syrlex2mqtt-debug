@@ -428,99 +428,284 @@ function parseToValueMap(json) {
   return valueMap;
 }
 
-function basicCommands(req, res) {
-	res.set('Content-Type', 'text/xml');
-	let responseXml = xmlStart + getXmlBasicC() + xmlEnd;
-	res.send(responseXml);
-	logVerbose("Response to basicCommands: " + responseXml);
-    res.set('Content-Type', 'text/xml');
-
-    // let responseXml =
-    //  xmlStart +
-    //  '<c n="getSRN" v="123456789"/>' +    // Seriennummer
-    //  '<c n="getVER" v="1.0.0"/>' +       // Version
-    //  '<c n="getFIR" v="FW1"/>' +         // Firmware
-    //  '<c n="getTYP" v="LEXplus10SL"/>' + // Typ
-    //  '<c n="getCNA" v="MyDevice"/>' +    // Name
-    //  '<c n="getIPA" v="192.168.1.50"/>' +// IP
-    //  xmlEnd;
-
-    //res.send(responseXml);
-   
-	//logVerbose("Response to basicCommands: " +  responseXml);
+// normalize IPv6 mapped addresses and strip prefix ::ffff:
+function normalizeRemoteAddress(addr) {
+  if(!addr) return addr;
+  if(addr.startsWith("::ffff:")) return addr.split(":").pop();
+  return addr;
 }
 
+// macht einen POST (application/x-www-form-urlencoded) mit xml=<xml> zum Gerät
+function postXmlToDevice(host, path, xmlPayload, port = 80, useTls = false) {
+  return new Promise((resolve, reject) => {
+    try {
+      const body = 'xml=' + encodeURIComponent(xmlPayload);
+      const opts = {
+        hostname: host,
+        port: port,
+        path: path,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Length': Buffer.byteLength(body, 'utf8')
+        },
+        timeout: 8000
+      };
+
+      const reqModule = useTls ? https : http;
+      const creq = reqModule.request(opts, (cres) => {
+        let data = '';
+        cres.setEncoding('utf8');
+        cres.on('data', chunk => data += chunk);
+        cres.on('end', () => {
+          resolve({ statusCode: cres.statusCode, headers: cres.headers, body: data });
+        });
+      });
+
+      creq.on('error', (err) => reject(err));
+      creq.on('timeout', () => { creq.destroy(new Error('timeout')); });
+
+      creq.write(body);
+      creq.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+// Hilfsfunktion: extrahiere XML-String aus express req.body (form-urlencoded oder raw text)
+function extractXmlFromReqBody(req) {
+  // 1) falls express.urlencoded({extended:true}) gesetzt ist, req.body.xml ist wahrscheinlich vorhanden
+  if (req && req.body && typeof req.body === 'object' && req.body.xml) {
+    return req.body.xml;
+  }
+  // 2) falls express.text() oder raw body: req.body kann ein String sein ("xml=...") oder reine XML
+  if (req && typeof req.body === 'string') {
+    let s = req.body;
+    if (s.startsWith("xml=")) {
+      try {
+        return decodeURIComponent(s.slice(4));
+      } catch(e) {
+        // falls decodeURIComponent scheitert, gib den Rest roh zurück
+        return s.slice(4);
+      }
+    }
+    return s;
+  }
+  return null;
+}
+
+
+async function basicCommands(req, res) {
+  // Content-Type wie gewohnt
+  res.set('Content-Type', 'text/xml');
+
+  // Erkenne Absender-IP (verwende Socket, Fallback Header)
+  const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.ip || '';
+  const clientIp = normalizeRemoteAddress(String(rawIp));
+
+  // Baue die XML anfrage mit den Basic-Gettern (dies ist der POST-Body, den wir an das Gerät senden)
+  const requestXml = xmlStart + getXmlBasicC() + xmlEnd;
+
+  // Der Pfad, den wir am Gerät ansprechen wollen (das gleiche, wie das Gerät später selbst an unseren Server postet)
+  const devicePath = '/WebServices/SyrConnectLimexWebService.asmx/GetAllCommands';
+
+  try {
+    logVerbose(`📡 Proxying Basic -> POST to device ${clientIp}${devicePath} ...`);
+    // POST an das Gerät (HTTP, Port 80). Falls du TLS brauchst, setze useTls=true und Port 443.
+    const proxyResponse = await postXmlToDevice(clientIp, devicePath, requestXml, 80, false);
+
+    if(proxyResponse && proxyResponse.statusCode == 200 && proxyResponse.body && proxyResponse.body.length > 0) {
+      // Proxy hat geantwortet — evtl. "xml=..." Prefix entfernen
+      let body = proxyResponse.body;
+      if(body.startsWith("xml=")) {
+        try { body = decodeURIComponent(body.slice(4)); } catch(e) { body = body.slice(4); }
+      }
+
+      // Logge die empfangene, ausgefüllte XML (verbose)
+      logVerbose("📥 Response from device (proxy):\n" + body);
+
+      // Versuche, die XML zu parsen und (wie allCommands) in MQTT zu verarbeiten
+      try {
+        const parsed = await xml.parseStringPromise(body);
+        if(parsed && parsed.sc && parsed.sc.d && parsed.sc.d[0] && parsed.sc.d[0].c) {
+          const json = parsed.sc.d[0].c;
+          const valueMap = parseToValueMap(json);
+
+          const model = valueMap.get('getCNA');
+          const snr = valueMap.get('getSRN');
+          const sw_version = valueMap.get('getVER');
+          const url = "http://" + valueMap.get('getIPA');
+
+          // getDevice legt Discovery Messages an falls neu
+          const device = await getDevice(model, snr, sw_version, url);
+
+          // Prüfe, ob alle Werte für Payload vorliegen (wie original in allCommands)
+          var allFound = true;
+          for(let i = 0; i < allC.length; i++) {
+            if(!valueMap.has(allC[i])) {
+              allFound = false;
+              break;
+            }
+          }
+
+          if(allFound) {
+            // bau Payload (vorsichtig, mit Defaults)
+            const payload = {
+              current_water_flow: valueMap.get('getFLO') || null,
+              salt_remaining: valueMap.get('getSS1') || null,
+              remaining_resin_capacity: valueMap.get('getCS1') || null,
+              remaining_water_capacity: valueMap.get('getRES') || null,
+              total_water_consumption: valueMap.get('getCOF') || null,
+              number_of_regenerations: valueMap.get('getTOR') || null,
+              last_regeneration: (valueMap.get('getLAR')) ? formatTimestamp(valueMap.get('getLAR')) : null,
+              status_message: valueMap.get('getSTA') || null,
+              salt_in_stock: valueMap.get('getSV1') || null,
+              regeneration_interval: valueMap.get('getRPD') || null,
+              regeneration_week_days: valueMap.get('getRPW') ? fromRegenerationWeekDaysMask(valueMap.get('getRPW')) : null,
+              regeneration_time: (valueMap.get('getRTH') && valueMap.get('getRTM')) ? String(valueMap.get('getRTH')).padStart(2,"0") + ":" + String(valueMap.get('getRTM')).padStart(2,"0") : null,
+              regeneration_running: valueMap.get('getRG1') == "1" ? 'ON' : 'OFF'
+            };
+            for(var p of additionalProperties) {
+              payload[p] = valueMap.get('get' + p) || null;
+            }
+
+            if(device.hasLeakageProtection) {
+              const cel = valueMap.get('getCEL');
+              payload['water_temperature'] = (cel != null) ? (cel / 10.0) : null;
+              const ab = valueMap.get('getAB');
+              payload['valve'] = (ab == "1") ? 'open' : 'closed';
+            }
+
+            logVerbose('Publishing state message from proxy response:\n' + JSON.stringify(payload));
+            sendMQTTStateMessage(mqttclient, model, snr, payload);
+          }
+        }
+      } catch(parseErr) {
+        logInfo("Fehler beim Parsen der proxied Antwort: " + parseErr);
+      }
+
+      // Zum Schluss: die vom Gerät zurückgegebene (gefüllte) XML direkt an den originierenden Client zurückgeben
+      res.set('Content-Type', 'text/xml');
+      res.send(body);
+      logVerbose("Response to basicCommands (proxied) sent to client.");
+      return;
+    } else {
+      // fallback: keine Antwort vom Gerät -> normale Basic-Response (leere Getter)
+      const fallback = xmlStart + getXmlBasicC() + xmlEnd;
+      res.set('Content-Type', 'text/xml');
+      res.send(fallback);
+      logVerbose("No proxy response; sent fallback basicCommands response.");
+      return;
+    }
+  } catch (err) {
+    // Fehler beim Proxy-POST -> Fallback
+    logInfo("Error proxying Basic->device: " + err);
+    const fallback = xmlStart + getXmlBasicC() + xmlEnd;
+    res.set('Content-Type', 'text/xml');
+    res.send(fallback);
+    return;
+  }
+}
+
+
 function allCommands(req, res) {
-	xml.parseStringPromise(req.body.xml).then(async function(result) {
-		let json = result.sc.d[0].c;
+  // Extrahiere XML aus req (form-urlencoded oder raw)
+  let xmlBody = extractXmlFromReqBody(req);
 
-    var valueMap = parseToValueMap(json);
-		
-    var model = valueMap.get('getCNA');
-    var snr = valueMap.get('getSRN');
-    var sw_version = valueMap.get('getVER');
-    var url = "http://" + valueMap.get('getIPA');
+  if(!xmlBody) {
+    // nichts da -> antworten mit leerem allC (wie vorher)
+    res.set('Content-Type', 'text/xml');
+    const responseXml = xmlStart + getXmlAllC({setters:{}}) + xmlEnd;
+    res.send(responseXml);
+    logVerbose("allCommands: no body found, sent empty response.");
+    return;
+  }
 
-    var device = await getDevice(model, snr, sw_version, url);
+  // Falls xmlBody beginnt mit "xml=" (falls text middleware genutzt wurde), säubern
+  if(xmlBody.startsWith("xml=")) {
+    try { xmlBody = decodeURIComponent(xmlBody.slice(4)); } catch(e) { xmlBody = xmlBody.slice(4); }
+  }
 
-    //logVerbose("device:\n" + JSON.stringify(device));
+  xml.parseStringPromise(xmlBody).then(async function(result) {
+    try {
+      let json = result.sc.d[0].c;
+      var valueMap = parseToValueMap(json);
 
-    var allFound = true;
-    for(let i = 0; i < allC.length; i++) {
-      if(!valueMap.has(allC[i])) {
-        allFound = false;
-        break;
+      var model = valueMap.get('getCNA');
+      var snr = valueMap.get('getSRN');
+      var sw_version = valueMap.get('getVER');
+      var url = "http://" + valueMap.get('getIPA');
+
+      var device = await getDevice(model, snr, sw_version, url);
+
+      var allFound = true;
+      for(let i = 0; i < allC.length; i++) {
+        if(!valueMap.has(allC[i])) {
+          allFound = false;
+          break;
+        }
       }
+
+      if(allFound) {
+        // sichere Leseoperationen mit Defaults
+        const larp = valueMap.get('getLAR');
+        const payload = {
+          current_water_flow: valueMap.get('getFLO') || null,
+          salt_remaining: valueMap.get('getSS1') || null,
+          remaining_resin_capacity: valueMap.get('getCS1') || null,
+          remaining_water_capacity: valueMap.get('getRES') || null,
+          total_water_consumption: valueMap.get('getCOF') || null,
+          number_of_regenerations: valueMap.get('getTOR') || null,
+          last_regeneration: larp ? formatTimestamp(larp) : null,
+          status_message: valueMap.get('getSTA') || null,
+          salt_in_stock: valueMap.get('getSV1') || null,
+          regeneration_interval: valueMap.get('getRPD') || null,
+          regeneration_week_days: valueMap.get('getRPW') ? fromRegenerationWeekDaysMask(valueMap.get('getRPW')) : null,
+          regeneration_time: (valueMap.get('getRTH') && valueMap.get('getRTM')) ? String(valueMap.get('getRTH')).padStart(2,"0") + ":" + String(valueMap.get('getRTM')).padStart(2,"0") : null,
+          regeneration_running: valueMap.get('getRG1') == "1" ? 'ON' : 'OFF'
+        };
+
+        for(var p of additionalProperties) {
+          payload[p] = valueMap.get('get' + p) || null;
+        }
+
+        if(device.hasLeakageProtection) {
+          const cel = valueMap.get('getCEL');
+          payload['water_temperature'] = (cel != null) ? (cel / 10.0) : null;
+          const ab = valueMap.get('getAB');
+          payload['valve'] = (ab == "1") ? 'open' : 'closed';
+        }
+
+        logVerbose('Publishing state message:\n' + JSON.stringify(payload));
+        sendMQTTStateMessage(mqttclient, model, snr, payload);
+      }
+
+      // send response (device expects values for getters/setters)
+      res.set('Content-Type', 'text/xml');
+      let responseXml = xmlStart + getXmlAllC(device) + xmlEnd;
+      res.send(responseXml);
+      logVerbose("Response to allCommands: " + responseXml);
+    } catch (innerErr) {
+      logInfo("allCommands processing error: " + innerErr);
+      // fallback response
+      res.set('Content-Type', 'text/xml');
+      res.send(xmlStart + getXmlAllC({setters:{}}) + xmlEnd);
     }
-
-    if(allFound) {
-      var payload = {
-        current_water_flow: valueMap.get('getFLO'),
-        salt_remaining: valueMap.get('getSS1'),
-        remaining_resin_capacity: valueMap.get('getCS1'),
-        remaining_water_capacity: valueMap.get('getRES'),
-        total_water_consumption: valueMap.get('getCOF'),
-        number_of_regenerations: valueMap.get('getTOR'),
-        last_regeneration: formatTimestamp(valueMap.get('getLAR')),
-        status_message: valueMap.get('getSTA'),
-        salt_in_stock: valueMap.get('getSV1'),
-        regeneration_interval: valueMap.get('getRPD'),
-        regeneration_week_days: fromRegenerationWeekDaysMask(valueMap.get('getRPW')),
-        regeneration_time: String(valueMap.get('getRTH')).padStart(2, "0") + ":" + String(valueMap.get('getRTM')).padStart(2, "0"),
-        regeneration_running: valueMap.get('getRG1') == "1" ? 'ON' : 'OFF',
-      }
-      for(var p of additionalProperties) {
-        payload[p] = valueMap.get('get' + p);
-      }
-
-      if(device.hasLeakageProtection) {
-        payload['water_temperature'] = valueMap.get('getCEL') / 10.0;
-        payload['valve'] = valueMap.get('getAB') == 1 ? 'open' : 'closed';
-      }
-
-      logVerbose('Publishing state message:\n' + JSON.stringify(payload));
-      sendMQTTStateMessage(mqttclient, model, snr, payload);
-    }
-	
-		//send response
-		res.set('Content-Type', 'text/xml');
-		let responseXml = xmlStart + getXmlAllC(device) + xmlEnd;
-		res.send(responseXml);
-		
-		logVerbose("Response to allCommands: " +  responseXml);
-	})
-	.catch(function(err) {
-		logInfo(err);
-	});
+  })
+  .catch(function(err) {
+    logInfo("XML parse error in allCommands: " + err);
+    res.set('Content-Type', 'text/xml');
+    res.send(xmlStart + getXmlAllC({setters:{}}) + xmlEnd);
+  });
 }
 
 async function initWebServer() {
   const app = express();
 
-  // Für XML-Body Parsing von Lex
-  app.use(express.text({ type: ['text/xml', 'application/xml', '*/xml'] }));
+  // for parsing application/x-www-form-urlencoded
+  app.use(express.urlencoded({ extended: true }));
 
-// Verbose Logging aller Requests
   app.use((req, res, next) => {
 	  logVerbose(
 	    "📥 Request for " +
@@ -535,59 +720,25 @@ async function initWebServer() {
     next();
   });
 
-  // --- BasicCommands ---
-  app.get('/WebServices/SyrConnectLimexWebService.asmx/GetBasicCommands', (req, res) => {
-    logVerbose("📝 Handling GET GetBasicCommands...");
-    const xml = basicCommands(req, res);
-    logVerbose("⬅️ Response:\n" + xml);
-	return xml;
-  });
-  app.post('/WebServices/SyrConnectLimexWebService.asmx/GetBasicCommands', (req, res) => {
-    logVerbose("📝 Handling POST GetBasicCommands...");
-    const xml = basicCommands(req, res);
-    logVerbose("⬅️ Response:\n" + xml);
-	return xml;
-  });
-  app.post('/GetBasicCommands', (req, res) => {
-    logVerbose("📝 Handling short POST GetBasicCommands...");
-    const xml = basicCommands(req, res);
-    logVerbose("⬅️ Response:\n" + xml);
-	return xml;
-  });
+  app.get('/WebServices/SyrConnectLimexWebService.asmx/GetBasicCommands', (req, res) => { basicCommands(req, res).catch ? /*if async*/ : null; });
+  app.post('/WebServices/SyrConnectLimexWebService.asmx/GetBasicCommands', (req, res) => { basicCommands(req, res).catch ? null : null; });
 
-  // --- AllCommands ---
-  app.get('/WebServices/SyrConnectLimexWebService.asmx/GetAllCommands', (req, res) => {
-    logVerbose("📝 Handling GET GetAllCommands...");
-    const xml = allCommands(req, res);
-    logVerbose("⬅️ Response:\n" + xml);
-	return xml;
-  });
-  app.post('/WebServices/SyrConnectLimexWebService.asmx/GetAllCommands', (req, res) => {
-    logVerbose("📝 Handling POST GetAllCommands...");
-    const xml = allCommands(req, res);
-    logVerbose("⬅️ Response:\n" + xml);
-	return xml;
-  });
-  app.post('/GetAllCommands', (req, res) => {
-    logVerbose("📝 Handling short POST GetAllCommands...");
-    const xml = allCommands(req, res);
-    logVerbose("⬅️ Response:\n" + xml);
-	return xml;
-  });
+  // AllCommands: GET + POST
+  app.post('/WebServices/SyrConnectLimexWebServicxe.asmx/GetAllCommands', (req, res) => { allCommands(req, res); });
+  app.get('/WebServices/SyrConnectLimexWebService.asmx/GetAllCommands', (req, res) => { allCommands(req, res); });
 
   // HTTP starten
   httpServer = http.createServer(app).listen(syrHttpPort, () => {
-    logVerbose(`🌍 HTTP listening on port ${syrHttpPort}`);
+    logInfo(`🌍 HTTP listening on port ${syrHttpPort}`);
   });
 
   // HTTPS starten
   httpsServer = https.createServer(credentials, app).listen(syrHttpsPort, () => {
-    logVerbose(`🔒 HTTPS listening on port ${syrHttpsPort}`);
+    logInfo(`🔒 HTTPS listening on port ${syrHttpsPort}`);
   });
 
   return app;
 }
-
 
 
 logInfo("Connecting to MQTT server '" + brokerUrl + "' with username '" + username + "'");
